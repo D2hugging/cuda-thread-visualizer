@@ -39,10 +39,6 @@ When learning CUDA programming, one of the first hurdles is understanding the th
 | Zoom | Scroll wheel | Two-finger pinch |
 | Select thread | Click | Tap |
 
-## Tech
-
-Single HTML file (~900 lines), SVG-based 3D rendering with perspective projection, zero external dependencies.
-
 ## License
 
-MIT
+[MIT](LICENSE)
