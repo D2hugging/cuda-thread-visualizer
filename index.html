@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CUDA Thread Visualizer</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0e17;
+      --panel: #111827;
+      --panel-border: #1e293b;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --accent-bg: rgba(0,255,136,0.06);
+      --text: #e2e8f0;
+      --text-dim: #64748b;
+      --text-muted: #475569;
+      --grid-bg: #1a2332;
+      --selected: #ff00ff;
+      --selected-glow: rgba(255,0,255,0.4);
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+    .app {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+      user-select: none;
+    }
+
+    /* ── Left Panel ── */
+    .panel {
+      width: 280px;
+      min-width: 280px;
+      background: var(--panel);
+      border-right: 1px solid var(--panel-border);
+      padding: 16px 14px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 10;
+    }
+    .panel::-webkit-scrollbar { width: 4px; }
+    .panel::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+    .panel-title { color: var(--accent); font-size: 15px; font-weight: 700; font-family: 'Space Grotesk', sans-serif; letter-spacing: 1px; }
+    .panel-subtitle { color: var(--text-dim); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
+
+    .section {
+      background: var(--accent-bg);
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--panel-border);
+    }
+    .section-title {
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+    .section-title span { color: var(--text-dim); font-weight: 400; }
+
+    .dim-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .dim-row:last-child { margin-bottom: 0; }
+    .dim-label { color: var(--text-dim); font-size: 11px; min-width: 18px; }
+    .dim-controls { display: flex; align-items: center; gap: 2px; }
+    .dim-btn {
+      background: var(--grid-bg);
+      border: 1px solid var(--panel-border);
+      color: var(--text-dim);
+      width: 22px; height: 22px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .dim-btn:hover { background: var(--panel-border); color: var(--text); }
+    .dim-input {
+      background: var(--bg);
+      border: 1px solid var(--panel-border);
+      color: var(--accent);
+      width: 38px; height: 22px;
+      border-radius: 4px;
+      text-align: center;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+    }
+    .dim-input:focus { border-color: var(--accent); }
+
+    .stat-box {
+      background: var(--grid-bg);
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--panel-border);
+    }
+    .stat-box.warn { background: rgba(255,100,100,0.1); border-color: #ff6464; }
+    .stat-label { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; }
+    .stat-value { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .stat-value.warn { color: #ff6464; }
+    .stat-warn { color: #ff6464; font-size: 10px; margin-top: 4px; }
+
+    .mode-label { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; margin-bottom: 6px; }
+    .mode-btns { display: flex; gap: 4px; }
+    .mode-btn {
+      flex: 1;
+      padding: 6px 0;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      transition: all 0.15s;
+    }
+    .mode-btn.active { background: var(--accent); color: var(--bg); }
+    .mode-btn:not(.active) { background: var(--grid-bg); color: var(--text-dim); }
+    .mode-btn:not(.active):hover { background: var(--panel-border); }
+
+    .focus-row { display: flex; gap: 6px; margin-top: 6px; }
+
+    .preset-btn {
+      display: block;
+      width: 100%;
+      background: var(--grid-bg);
+      border: 1px solid var(--panel-border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 10px;
+      text-align: left;
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 4px;
+      transition: all 0.15s;
+    }
+    .preset-btn:last-child { margin-bottom: 0; }
+    .preset-btn:hover { background: var(--panel-border); border-color: var(--accent); }
+
+    .reset-btn {
+      background: var(--grid-bg);
+      border: 1px solid var(--panel-border);
+      color: var(--text-dim);
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      width: 100%;
+    }
+    .reset-btn:hover { color: var(--text); border-color: var(--accent); }
+
+    .help-text { color: var(--text-muted); font-size: 9px; line-height: 1.5; margin-top: auto; }
+
+    /* ── Viewport ── */
+    .viewport { flex: 1; position: relative; }
+    .viewport svg { display: block; width: 100%; height: 100%; }
+
+    /* ── HUD ── */
+    .hud {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: rgba(17,24,39,0.95);
+      border-radius: 10px;
+      padding: 14px 18px;
+      min-width: 240px;
+      z-index: 20;
+      pointer-events: none;
+    }
+    .hud.selected { border: 1px solid var(--selected); box-shadow: 0 0 20px var(--selected-glow); }
+    .hud.hovered { border: 1px solid var(--accent); box-shadow: 0 0 20px rgba(0,255,136,0.15); }
+    .hud-title { font-size: 11px; font-weight: 700; margin-bottom: 8px; letter-spacing: 1px; }
+    .hud-title.selected { color: var(--selected); }
+    .hud-title.hovered { color: var(--accent); }
+    .hud-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 11px; }
+    .hud-key { color: var(--text-dim); }
+    .hud-val { color: var(--text); }
+    .hud-val.accent { color: var(--accent); }
+    .hud-code {
+      margin-top: 10px;
+      padding: 8px 10px;
+      background: var(--bg);
+      border-radius: 6px;
+      font-size: 10px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .hud-code .kw { color: #ff6b6b; }
+    .hud-code .cmt { color: var(--accent); font-weight: 600; }
+    .hud-code-comment { color: #6a737d; font-style: italic; margin-bottom: 2px; }
+    .hud-code-eval { color: #8b949e; font-size: 10px; margin-bottom: 4px; }
+    .hud-divider { height: 1px; background: var(--panel-border); margin: 8px 0; }
+
+    /* ── Bottom bar ── */
+    .launch-bar {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      right: 12px;
+      background: rgba(17,24,39,0.9);
+      border-radius: 8px;
+      padding: 10px 16px;
+      border: 1px solid var(--panel-border);
+      font-size: 11px;
+      color: var(--text);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .launch-bar .kw { color: #ff6b6b; }
+    .launch-bar .sep { color: var(--text-muted); }
+    .launch-bar .angle { color: #f7dc6f; }
+
+    /* ── Axis Legend (fixed corner compass) ── */
+    .axis-legend {
+      position: absolute;
+      bottom: 60px;
+      right: 16px;
+      z-index: 15;
+      pointer-events: none;
+    }
+    .axis-legend svg { overflow: visible; }
+
+    /* ── Breadcrumb bar ── */
+    .breadcrumb {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .breadcrumb-btn {
+      background: rgba(17,24,39,0.92);
+      border: 1px solid var(--panel-border);
+      color: var(--accent);
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+    .breadcrumb-btn:hover { border-color: var(--accent); background: rgba(0,255,136,0.08); }
+    .breadcrumb-sep { color: var(--text-muted); font-size: 14px; }
+    .breadcrumb-current {
+      background: rgba(17,24,39,0.92);
+      border: 1px solid var(--panel-border);
+      color: var(--text);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+
+    /* ── Mobile ── */
+    @media (max-width: 768px) {
+      .panel { width: 220px; min-width: 220px; padding: 12px 10px; }
+    }
+    @media (max-width: 600px) {
+      .app { flex-direction: column; }
+      .panel {
+        width: 100%; min-width: 100%; height: auto; max-height: 35vh;
+        flex-direction: row; flex-wrap: wrap; gap: 8px; padding: 8px;
+        border-right: none; border-bottom: 1px solid var(--panel-border);
+      }
+      .help-text { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+// ─── State ───
+const state = {
+  gridDim: [2, 2, 1],
+  blockDim: [4, 4, 1],
+  camera: { rotX: 0.4, rotY: -0.5, zoom: 1.5, panX: 0, panY: 0 }, // zoom recalculated on init
+  isDragging: false,
+  dragStart: { x: 0, y: 0 },
+  dragButton: 0,
+  selected: null,   // selected thread
+  hovered: null,    // hovered thread
+};
+
+const BLOCK_COLORS = [
+  '#ff6b6b','#4ecdc4','#45b7d1','#f7dc6f','#bb8fce','#82e0aa','#f0b27a','#85c1e9',
+  '#f1948a','#76d7c4','#7fb3d8','#f9e79f','#c39bd3','#a9dfbf','#edbb99','#aed6f1',
+  '#e6b0aa','#a3e4d7','#a9cce3','#fad7a0',
+];
+
+function blockColor(bx, by, bz) {
+  const idx = bz * state.gridDim[0] * state.gridDim[1] + by * state.gridDim[0] + bx;
+  return BLOCK_COLORS[idx % BLOCK_COLORS.length];
+}
+
+// ─── 3D Projection ───
+function project(x, y, z) {
+  const { rotX, rotY, zoom, panX, panY } = state.camera;
+  const cX = Math.cos(rotX), sX = Math.sin(rotX);
+  const cY = Math.cos(rotY), sY = Math.sin(rotY);
+  const x1 = x * cY + z * sY;
+  const z1 = -x * sY + z * cY;
+  const y1 = y * cX - z1 * sX;
+  const z2 = y * sX + z1 * cX;
+  const perspective = 600 / (z2 + 600 / zoom);
+  return { sx: x1 * perspective + panX, sy: y1 * perspective + panY, depth: z2 };
+}
+
+// ─── Compute threads (always shows all threads across all blocks) ───
+function computeThreads() {
+  const [gx, gy, gz] = state.gridDim;
+  const [bx, by, bz] = state.blockDim;
+  const total = gx * gy * gz * bx * by * bz;
+  if (total > 4096) return [];
+
+  const cubeSize = Math.min(1.0, 8.0 / Math.max(gx*bx, gy*by, gz*bz));
+  const gap = cubeSize * 0.15;
+  const blockGap = cubeSize * 0.8;
+  const threads = [];
+
+  const totalW = gx * (bx * (cubeSize + gap) - gap + blockGap) - blockGap;
+  const totalH = gy * (by * (cubeSize + gap) - gap + blockGap) - blockGap;
+  const totalD = gz * (bz * (cubeSize + gap) - gap + blockGap) - blockGap;
+
+  for (var Bz = 0; Bz < gz; Bz++) {
+    for (var By = 0; By < gy; By++) {
+      for (var Bx = 0; Bx < gx; Bx++) {
+        for (var tz = 0; tz < bz; tz++) {
+          for (var ty = 0; ty < by; ty++) {
+            for (var tx = 0; tx < bx; tx++) {
+              var px = Bx * (bx * (cubeSize + gap) - gap + blockGap) + tx * (cubeSize + gap) - totalW / 2;
+              var py = By * (by * (cubeSize + gap) - gap + blockGap) + ty * (cubeSize + gap) - totalH / 2;
+              var pz = Bz * (bz * (cubeSize + gap) - gap + blockGap) + tz * (cubeSize + gap) - totalD / 2;
+              threads.push({
+                x: px, y: py, z: pz, cubeSize: cubeSize,
+                bx: Bx, by: By, bz: Bz, tx: tx, ty: ty, tz: tz,
+                globalX: Bx * bx + tx,
+                globalY: By * by + ty,
+                globalZ: Bz * bz + tz,
+                color: blockColor(Bx, By, Bz),
+                key: Bx+'-'+By+'-'+Bz+'-'+tx+'-'+ty+'-'+tz,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return threads;
+}
+
+// ─── Build sorted faces ───
+const FACE_DEFS = [
+  { c: (s)=>[[- s,- s, s],[ s,- s, s],[ s, s, s],[- s, s, s]], n:[0,0,1] },
+  { c: (s)=>[[- s,- s,- s],[- s, s,- s],[ s, s,- s],[ s,- s,- s]], n:[0,0,-1] },
+  { c: (s)=>[[- s, s,- s],[- s, s, s],[ s, s, s],[ s, s,- s]], n:[0,1,0] },
+  { c: (s)=>[[- s,- s,- s],[ s,- s,- s],[ s,- s, s],[- s,- s, s]], n:[0,-1,0] },
+  { c: (s)=>[[ s,- s,- s],[ s, s,- s],[ s, s, s],[ s,- s, s]], n:[1,0,0] },
+  { c: (s)=>[[- s,- s,- s],[- s,- s, s],[- s, s, s],[- s, s,- s]], n:[-1,0,0] },
+];
+
+function buildFaces(threads) {
+  var faces = [];
+  for (var i = 0; i < threads.length; i++) {
+    var t = threads[i];
+    var s = t.cubeSize / 2;
+    var isSel = state.selected && state.selected.key === t.key;
+    var isHov = state.hovered && state.hovered.key === t.key;
+    for (var fi = 0; fi < FACE_DEFS.length; fi++) {
+      var fd = FACE_DEFS[fi];
+      var corners = fd.c(s).map(function(d) { return project(t.x+d[0], t.y+d[1], t.z+d[2]); });
+      var avgDepth = corners.reduce(function(a, p) { return a + p.depth; }, 0) / 4;
+      var light = 0.3 + 0.7 * Math.max(0, -fd.n[1]*0.5 + fd.n[2]*0.3 + fd.n[0]*0.2);
+      faces.push({ corners: corners, avgDepth: avgDepth, light: light, thread: t, isSel: isSel, isHov: isHov });
+    }
+  }
+  faces.sort(function(a, b) { return b.avgDepth - a.avgDepth; });
+  return faces;
+}
+
+// ─── SVG helpers ───
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}
+
+// ─── Draw Axes ───
+function drawAxes(scene) {
+  var [gx,gy,gz] = state.gridDim;
+  var [bdx,bdy,bdz] = state.blockDim;
+
+  var dimX = gx*bdx, dimY = gy*bdy, dimZ = gz*bdz;
+  var cSize = Math.min(1.0, 8.0 / Math.max(dimX, dimY, dimZ));
+  var gap = cSize * 0.15;
+  var blockGap = cSize * 0.8;
+  var totalW = gx * (bdx * (cSize + gap) - gap + blockGap) - blockGap;
+  var totalH = gy * (bdy * (cSize + gap) - gap + blockGap) - blockGap;
+  var totalD = gz * (bdz * (cSize + gap) - gap + blockGap) - blockGap;
+  const pad = cSize * 1.2;
+  const ox = -totalW/2 - pad, oy = -totalH/2 - pad, oz = -totalD/2 - pad;
+  const lx = totalW + pad*2.5, ly = totalH + pad*2.5, lz = totalD + pad*2.5;
+
+  const axColors = { x: '#ff5555', y: '#55ff55', z: '#5599ff' };
+  const axisG = svgEl('g', {});
+
+  function drawAxis(start, end, color, label, sub, opMul) {
+    const om = opMul || 1;
+    const p0 = project(...start), p1 = project(...end);
+    const dx = p1.sx-p0.sx, dy = p1.sy-p0.sy;
+    const len = Math.sqrt(dx*dx+dy*dy);
+    if (len < 5) return;
+    const ux = dx/len, uy = dy/len;
+    // Glow
+    axisG.appendChild(svgEl('line', { x1:p0.sx, y1:p0.sy, x2:p1.sx, y2:p1.sy, stroke:color, 'stroke-width':4, opacity:0.15*om, 'stroke-linecap':'round' }));
+    // Line
+    axisG.appendChild(svgEl('line', { x1:p0.sx, y1:p0.sy, x2:p1.sx, y2:p1.sy, stroke:color, 'stroke-width':2, opacity:0.85*om, 'stroke-linecap':'round' }));
+    // Arrow
+    const as = 10;
+    axisG.appendChild(svgEl('polygon', { points:`${p1.sx},${p1.sy} ${p1.sx-ux*as+uy*as*0.5},${p1.sy-uy*as-ux*as*0.5} ${p1.sx-ux*as-uy*as*0.5},${p1.sy-uy*as+ux*as*0.5}`, fill:color, opacity:0.9*om }));
+    // Label bg + text
+    const lbx = p1.sx+ux*16, lby = p1.sy+uy*16;
+    axisG.appendChild(svgEl('rect', { x:lbx-18, y:lby-12, width:36, height:20, rx:4, fill:'#0a0e17', 'fill-opacity':0.85*om, stroke:color, 'stroke-width':1, 'stroke-opacity':0.5*om }));
+    const lt = svgEl('text', { x:lbx, y:lby+4, fill:color, 'font-size':13, 'font-weight':700, 'font-family':'Space Grotesk, sans-serif', 'text-anchor':'middle', 'dominant-baseline':'middle', opacity:om });
+    lt.textContent = label;
+    axisG.appendChild(lt);
+    if (sub) {
+      const st = svgEl('text', { x:lbx, y:lby+17, fill:color, 'font-size':9, opacity:0.6*om, 'font-family':'JetBrains Mono', 'text-anchor':'middle' });
+      st.textContent = sub;
+      axisG.appendChild(st);
+    }
+  }
+
+  const xSub = 'blockIdx.x · threadIdx.x';
+  const ySub = 'blockIdx.y · threadIdx.y';
+  const zSub = 'blockIdx.z · threadIdx.z';
+  const useZ = gz > 1 || bdz > 1;
+
+  drawAxis([ox,oy,oz], [ox+lx,oy,oz], axColors.x, 'X', xSub);
+  drawAxis([ox,oy,oz], [ox,oy+ly,oz], axColors.y, 'Y', ySub);
+  drawAxis([ox,oy,oz], [ox,oy,oz+lz], axColors.z, 'Z', zSub, useZ ? 1 : 0.3);
+
+  // Origin dot
+  const op = project(ox, oy, oz);
+  axisG.appendChild(svgEl('circle', { cx:op.sx, cy:op.sy, r:3, fill:'#fff', opacity:0.6 }));
+  const ot = svgEl('text', { x:op.sx-8, y:op.sy+14, fill:'#fff', 'font-size':9, opacity:0.4, 'font-family':'JetBrains Mono' });
+  ot.textContent = '(0,0,0)';
+  axisG.appendChild(ot);
+
+  scene.appendChild(axisG);
+}
+
+// ─── Main Scene Render ───
+function renderScene() {
+  const scene = document.getElementById('scene-group');
+  scene.innerHTML = '';
+
+  drawAxes(scene);
+
+  var threads = computeThreads();
+  var faces = buildFaces(threads);
+
+  for (var i = 0; i < faces.length; i++) {
+    var f = faces[i];
+    var t = f.thread;
+    var pts = f.corners.map(function(p){ return p.sx+','+p.sy; }).join(' ');
+
+    var fill, fillOp, stk, stkW, stkOp;
+    if (f.isSel) {
+      fill = '#ff00ff'; fillOp = 0.85 * f.light; stk = '#ff00ff'; stkW = 2; stkOp = 1;
+    } else if (f.isHov) {
+      fill = '#ffffff'; fillOp = 0.7 * f.light; stk = '#fff'; stkW = 1.5; stkOp = 0.8;
+    } else {
+      fill = t.color; fillOp = 0.55 * f.light; stk = t.color; stkW = 0.5; stkOp = 0.6;
+    }
+
+    var poly = svgEl('polygon', {
+      points: pts, fill: fill, 'fill-opacity': fillOp,
+      stroke: stk, 'stroke-width': stkW, 'stroke-opacity': stkOp,
+      style: 'cursor:pointer',
+    });
+
+    (function(tRef) {
+      poly.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (state.selected && state.selected.key === tRef.key) {
+          state.selected = null;
+        } else {
+          state.selected = tRef;
+        }
+        render();
+      });
+      poly.addEventListener('mouseenter', function() {
+        state.hovered = tRef;
+        renderScene(); renderHUD(); renderAxisCompass();
+      });
+      poly.addEventListener('mouseleave', function() {
+        state.hovered = null;
+        renderScene(); renderHUD(); renderAxisCompass();
+      });
+    })(t);
+
+    scene.appendChild(poly);
+  }
+}
+
+// ─── HUD ───
+function renderHUD() {
+  var hud = document.getElementById('hud');
+  var info = state.selected || state.hovered;
+
+  if (!info) { hud.style.display = 'none'; return; }
+  hud.style.display = 'block';
+  hud.className = 'hud ' + (state.selected ? 'selected' : 'hovered');
+
+  var [gx,gy,gz] = state.gridDim;
+  var [bx,by,bz] = state.blockDim;
+
+  // Thread info
+  var show3d = gz > 1 || bz > 1;
+  var varX = show3d ? 'x' : 'col';
+  var varY = show3d ? 'y' : 'row';
+
+  var totalCols = gx * bx;
+  var totalRows = gy * by;
+  var globalIdx = show3d
+    ? info.globalZ * totalCols * totalRows + info.globalY * totalCols + info.globalX
+    : info.globalY * totalCols + info.globalX;
+
+  var widthExpr = 'gridDim.x * blockDim.x';
+  var sliceExpr = 'gridDim.x * blockDim.x * gridDim.y * blockDim.y';
+  var idxFormula = show3d
+    ? 'z * ' + sliceExpr + ' + ' + varY + ' * ' + widthExpr + ' + ' + varX
+    : varY + ' * ' + widthExpr + ' + ' + varX;
+  var idxEval = show3d
+    ? info.globalZ + ' * ' + (totalCols*totalRows) + ' + ' + info.globalY + ' * ' + totalCols + ' + ' + info.globalX
+    : info.globalY + ' * ' + totalCols + ' + ' + info.globalX;
+
+  hud.innerHTML =
+    '<div class="hud-title ' + (state.selected ? 'selected' : 'hovered') + '">' +
+      (state.selected ? 'SELECTED' : 'HOVER') + ' THREAD</div>' +
+    '<div class="hud-grid">' +
+      '<span class="hud-key">blockIdx</span><span class="hud-val">(' + info.bx + ', ' + info.by + ', ' + info.bz + ')</span>' +
+      '<span class="hud-key">threadIdx</span><span class="hud-val">(' + info.tx + ', ' + info.ty + ', ' + info.tz + ')</span>' +
+      '<span class="hud-key">blockDim</span><span class="hud-val">(' + bx + ', ' + by + ', ' + bz + ')</span>' +
+      '<span class="hud-key">gridDim</span><span class="hud-val">(' + gx + ', ' + gy + ', ' + gz + ')</span>' +
+    '</div>' +
+    '<div class="hud-divider"></div>' +
+    '<div class="hud-code">' +
+      '<div class="hud-code-comment">// Compute global position</div>' +
+      '<div><span class="kw">int</span> ' + varX + ' = blockIdx.x * blockDim.x + threadIdx.x;</div>' +
+      '<div class="hud-code-eval">    = ' + info.bx + ' * ' + bx + ' + ' + info.tx + ' = <span class="cmt">' + info.globalX + '</span></div>' +
+      '<div><span class="kw">int</span> ' + varY + ' = blockIdx.y * blockDim.y + threadIdx.y;</div>' +
+      '<div class="hud-code-eval">    = ' + info.by + ' * ' + by + ' + ' + info.ty + ' = <span class="cmt">' + info.globalY + '</span></div>' +
+      (show3d ?
+        '<div><span class="kw">int</span> z = blockIdx.z * blockDim.z + threadIdx.z;</div>' +
+        '<div class="hud-code-eval">    = ' + info.bz + ' * ' + bz + ' + ' + info.tz + ' = <span class="cmt">' + info.globalZ + '</span></div>'
+      : '') +
+      '<div class="hud-divider"></div>' +
+      '<div class="hud-code-comment">// Global linear index</div>' +
+      '<div><span class="kw">int</span> idx = ' + idxFormula + ';</div>' +
+      '<div class="hud-code-eval">    = ' + idxEval + ' = <span class="cmt">' + globalIdx + '</span></div>' +
+    '</div>';
+}
+
+// ─── Launch bar ───
+function renderLaunchBar() {
+  var [gx,gy,gz] = state.gridDim;
+  var [bx,by,bz] = state.blockDim;
+  document.getElementById('launch-bar').innerHTML =
+    '<span class="kw">dim3</span> grid(' + gx + ', ' + gy + ', ' + gz + ');' +
+    ' <span class="sep">│</span> ' +
+    '<span class="kw">dim3</span> block(' + bx + ', ' + by + ', ' + bz + ');' +
+    ' <span class="sep">│</span> ' +
+    'kernel<span class="angle">&lt;&lt;&lt;</span>grid, block<span class="angle">&gt;&gt;&gt;</span>();';
+}
+
+// ─── Breadcrumb (unused) ───
+function renderBreadcrumb() {}
+
+// ─── Axis Compass ───
+function renderAxisCompass() {
+  var compassSvg = document.querySelector('#axis-legend svg');
+  if (!compassSvg) return;
+  compassSvg.innerHTML = '';
+
+  var rotX = state.camera.rotX, rotY = state.camera.rotY;
+  var cX = Math.cos(rotX), sX = Math.sin(rotX);
+  var cY = Math.cos(rotY), sY = Math.sin(rotY);
+  var axLen = 32;
+
+  var axes = [
+    { dx: axLen, dy: 0, dz: 0, color: '#ff5555', label: 'X' },
+    { dx: 0, dy: axLen, dz: 0, color: '#55ff55', label: 'Y' },
+    { dx: 0, dy: 0, dz: axLen, color: '#5599ff', label: 'Z' },
+  ];
+
+  var projected = axes.map(function(a) {
+    var x1 = a.dx * cY + a.dz * sY;
+    var z1 = -a.dx * sY + a.dz * cY;
+    var y1 = a.dy * cX - z1 * sX;
+    var z2 = a.dy * sX + z1 * cX;
+    return { sx: x1, sy: y1, depth: z2, color: a.color, label: a.label };
+  });
+  projected.sort(function(a,b){ return a.depth - b.depth; });
+
+  // Background
+  compassSvg.appendChild(svgEl('circle', { cx:0, cy:0, r:44, fill:'#111827', 'fill-opacity':'0.85', stroke:'#1e293b', 'stroke-width':'1' }));
+
+  projected.forEach(function(a) {
+    var opacity = 0.4 + 0.6 * ((a.depth + axLen) / (2 * axLen));
+    // Glow + line
+    compassSvg.appendChild(svgEl('line', { x1:0, y1:0, x2:a.sx, y2:a.sy, stroke:a.color, 'stroke-width':'4', opacity:opacity*0.2, 'stroke-linecap':'round' }));
+    compassSvg.appendChild(svgEl('line', { x1:0, y1:0, x2:a.sx, y2:a.sy, stroke:a.color, 'stroke-width':'2.5', opacity:opacity, 'stroke-linecap':'round' }));
+    // Arrow
+    var len = Math.sqrt(a.sx*a.sx + a.sy*a.sy);
+    if (len > 5) {
+      var ux = a.sx/len, uy = a.sy/len, as = 6;
+      compassSvg.appendChild(svgEl('polygon', { points: a.sx+','+a.sy+' '+(a.sx-ux*as+uy*as*0.5)+','+(a.sy-uy*as-ux*as*0.5)+' '+(a.sx-ux*as-uy*as*0.5)+','+(a.sy-uy*as+ux*as*0.5), fill:a.color, opacity:opacity }));
+    }
+    // Label
+    var lt = svgEl('text', { x:a.sx*1.35, y:a.sy*1.35+4, fill:a.color, 'font-size':'12', 'font-weight':'700', opacity:opacity, 'font-family':'Space Grotesk, sans-serif', 'text-anchor':'middle' });
+    lt.textContent = a.label;
+    compassSvg.appendChild(lt);
+  });
+  compassSvg.appendChild(svgEl('circle', { cx:0, cy:0, r:2.5, fill:'#fff', opacity:'0.5' }));
+}
+
+// ─── Panel ───
+function renderPanel() {
+  var [gx,gy,gz] = state.gridDim;
+  var [bx,by,bz] = state.blockDim;
+  var total = gx*gy*gz*bx*by*bz;
+  var totalBlocks = gx*gy*gz;
+  var threadsPerBlock = bx*by*bz;
+  var warn = total > 4096;
+
+  var panel = document.getElementById('panel');
+  panel.innerHTML =
+    '<div>' +
+      '<div class="panel-title">CUDA THREAD</div>' +
+      '<div class="panel-subtitle">VISUALIZER</div>' +
+    '</div>' +
+
+    '<div class="section">' +
+      '<div class="section-title">gridDim <span>(' + totalBlocks + ' blocks)</span></div>' +
+      dimRow('gx', gx, 1, 16) +
+      dimRow('gy', gy, 1, 16) +
+      dimRow('gz', gz, 1, 16) +
+    '</div>' +
+
+    '<div class="section">' +
+      '<div class="section-title">blockDim <span>(' + threadsPerBlock + '/block)</span></div>' +
+      dimRow('bx', bx, 1, 32) +
+      dimRow('by', by, 1, 32) +
+      dimRow('bz', bz, 1, 32) +
+    '</div>' +
+
+    '<div class="stat-box ' + (warn ? 'warn' : '') + '">' +
+      '<div class="stat-label">TOTAL THREADS</div>' +
+      '<div class="stat-value ' + (warn ? 'warn' : '') + '">' + total.toLocaleString() + '</div>' +
+      (warn ? '<div class="stat-warn">⚠ Max 4096 for visualization</div>' : '') +
+    '</div>' +
+
+    '<div>' +
+      '<div class="mode-label">PRESETS</div>' +
+      '<button class="preset-btn" data-preset="0">1D: 4 blocks × 8 threads</button>' +
+      '<button class="preset-btn" data-preset="1">2D: 2×2 blocks × 4×4</button>' +
+      '<button class="preset-btn" data-preset="2">3D: 2×2×2 × 2×2×2</button>' +
+      '<button class="preset-btn" data-preset="3">GEMM: 2×2 × 16×16</button>' +
+    '</div>' +
+
+    '<button class="reset-btn" id="reset-cam">Reset Camera</button>' +
+
+    '<div class="help-text">' +
+      '<div>🖱 Left drag: rotate</div>' +
+      '<div>🖱 Right drag: pan</div>' +
+      '<div>🖱 Scroll: zoom</div>' +
+      '<div>🖱 Click thread: select</div>' +
+    '</div>';
+
+  // Bind events
+  panel.querySelectorAll('[data-dim]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      changeDim(btn.dataset.dim, parseInt(btn.dataset.dir));
+    });
+  });
+  panel.querySelectorAll('[data-diminput]').forEach(function(inp) {
+    inp.addEventListener('change', function() {
+      var v = parseInt(inp.value);
+      if (!isNaN(v)) setDimValue(inp.dataset.diminput, v);
+    });
+  });
+  panel.querySelectorAll('[data-preset]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var presets = [
+        { g:[4,1,1], b:[8,1,1], rotX: 0.3, rotY: -0.3 },   // 1D
+        { g:[2,2,1], b:[4,4,1], rotX: 0.4, rotY: -0.5 },   // 2D
+        { g:[2,2,2], b:[2,2,2], rotX: 0.5, rotY: -0.6 },   // 3D
+        { g:[2,2,1], b:[16,16,1], rotX: 0.3, rotY: -0.4 }, // GEMM
+      ];
+      var p = presets[parseInt(btn.dataset.preset)];
+      state.gridDim = p.g.slice();
+      state.blockDim = p.b.slice();
+      state.selected = null;
+      state.hovered = null;
+      var zoom = calcAutoZoom(p.rotX, p.rotY);
+      state.camera = { rotX: p.rotX, rotY: p.rotY, zoom: zoom, panX: 0, panY: 0 };
+      render();
+    });
+  });
+  var resetBtn = document.getElementById('reset-cam');
+  if (resetBtn) resetBtn.addEventListener('click', function() { resetCamera(); render(); });
+}
+
+function dimRow(id, value, min, max) {
+  return '<div class="dim-row">' +
+    '<span class="dim-label">' + id.replace('f','') + '</span>' +
+    '<div class="dim-controls">' +
+      '<button class="dim-btn" data-dim="' + id + '" data-dir="-1">−</button>' +
+      '<input class="dim-input" type="number" value="' + value + '" min="' + min + '" max="' + max + '" data-diminput="' + id + '" />' +
+      '<button class="dim-btn" data-dim="' + id + '" data-dir="1">+</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function changeDim(dim, dir) {
+  var mapping = { gx:[0,'gridDim',1,16], gy:[1,'gridDim',1,16], gz:[2,'gridDim',1,16], bx:[0,'blockDim',1,32], by:[1,'blockDim',1,32], bz:[2,'blockDim',1,32] };
+  var m = mapping[dim];
+  state[m[1]][m[0]] = Math.max(m[2], Math.min(m[3], state[m[1]][m[0]] + dir));
+  state.selected = null;
+  state.camera.zoom = calcAutoZoom(state.camera.rotX, state.camera.rotY);
+  render();
+}
+function setDimValue(dim, v) {
+  var mapping = { gx:[0,'gridDim',1,16], gy:[1,'gridDim',1,16], gz:[2,'gridDim',1,16], bx:[0,'blockDim',1,32], by:[1,'blockDim',1,32], bz:[2,'blockDim',1,32] };
+  var m = mapping[dim];
+  state[m[1]][m[0]] = Math.max(m[2], Math.min(m[3], v));
+  state.selected = null;
+  state.camera.zoom = calcAutoZoom(state.camera.rotX, state.camera.rotY);
+  render();
+}
+
+// ─── Auto-fit zoom calculation ───
+function calcAutoZoom(rotX, rotY) {
+  var gx = state.gridDim[0], gy = state.gridDim[1], gz = state.gridDim[2];
+  var bx = state.blockDim[0], by = state.blockDim[1], bz = state.blockDim[2];
+  var cubeSize = Math.min(1.0, 8.0 / Math.max(gx*bx, gy*by, gz*bz));
+  var gap = cubeSize * 0.15;
+  var blockGap = cubeSize * 0.8;
+  var totalW = gx * (bx * (cubeSize + gap) - gap + blockGap) - blockGap;
+  var totalH = gy * (by * (cubeSize + gap) - gap + blockGap) - blockGap;
+  var totalD = gz * (bz * (cubeSize + gap) - gap + blockGap) - blockGap;
+
+  // Project the 8 corners of the bounding box and find the screen extent
+  var cX = Math.cos(rotX), sX = Math.sin(rotX);
+  var cY = Math.cos(rotY), sY = Math.sin(rotY);
+  var hw = totalW/2, hh = totalH/2, hd = totalD/2;
+  var maxSx = 0, maxSy = 0;
+  for (var iz = -1; iz <= 1; iz += 2) {
+    for (var iy = -1; iy <= 1; iy += 2) {
+      for (var ix = -1; ix <= 1; ix += 2) {
+        var x = ix * hw, y = iy * hh, z = iz * hd;
+        var x1 = x * cY + z * sY;
+        var z1 = -x * sY + z * cY;
+        var y1 = y * cX - z1 * sX;
+        if (Math.abs(x1) > maxSx) maxSx = Math.abs(x1);
+        if (Math.abs(y1) > maxSy) maxSy = Math.abs(y1);
+      }
+    }
+  }
+
+  // viewBox is 1000x700, we want the grid to fill ~75% of it
+  var targetHalfW = 370;
+  var targetHalfH = 260;
+  // perspective = 600 / (z2 + 600/zoom), at z2≈0: perspective ≈ zoom
+  // screenX = x1 * zoom, so zoom = targetHalfW / maxSx
+  var zoomX = maxSx > 0.01 ? targetHalfW / maxSx : 5;
+  var zoomY = maxSy > 0.01 ? targetHalfH / maxSy : 5;
+  return Math.min(zoomX, zoomY);
+}
+
+function resetCamera() {
+  var rotX = 0.4, rotY = -0.5;
+  state.camera = { rotX: rotX, rotY: rotY, zoom: calcAutoZoom(rotX, rotY), panX: 0, panY: 0 };
+}
+
+// ─── Full render ───
+function render() {
+  renderPanel();
+  renderScene();
+  renderHUD();
+  renderLaunchBar();
+  renderBreadcrumb();
+  renderAxisCompass();
+}
+
+// ─── Init ───
+function init() {
+  document.getElementById('app').innerHTML =
+    '<div class="panel" id="panel"></div>' +
+    '<div class="viewport">' +
+      '<svg id="main-svg" viewBox="-500 -350 1000 700">' +
+        '<g id="scene-group"></g>' +
+      '</svg>' +
+      '<div class="breadcrumb" id="breadcrumb"></div>' +
+      '<div class="hud" id="hud" style="display:none"></div>' +
+      '<div class="launch-bar" id="launch-bar"></div>' +
+      '<div class="axis-legend" id="axis-legend">' +
+        '<svg width="100" height="100" viewBox="-50 -50 100 100"></svg>' +
+      '</div>' +
+    '</div>';
+
+  var svg = document.getElementById('main-svg');
+
+  svg.addEventListener('mousedown', function(e) {
+    state.isDragging = true;
+    state.dragStart = { x: e.clientX, y: e.clientY };
+    state.dragButton = e.button;
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', function(e) {
+    if (!state.isDragging) return;
+    var dx = e.clientX - state.dragStart.x;
+    var dy = e.clientY - state.dragStart.y;
+    state.dragStart = { x: e.clientX, y: e.clientY };
+    if (state.dragButton === 0) {
+      state.camera.rotY += dx * 0.005;
+      state.camera.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, state.camera.rotX + dy * 0.005));
+    } else {
+      state.camera.panX += dx;
+      state.camera.panY += dy;
+    }
+    renderScene(); renderHUD(); renderAxisCompass();
+  });
+
+  window.addEventListener('mouseup', function() { state.isDragging = false; });
+  svg.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+  svg.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    state.camera.zoom = Math.max(0.1, Math.min(100, state.camera.zoom * (1 - e.deltaY * 0.0015)));
+    renderScene(); renderHUD(); renderAxisCompass();
+  }, { passive: false });
+
+  // Touch support
+  var lastTouchDist = 0;
+  svg.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      state.isDragging = true;
+      state.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      state.dragButton = 0;
+    } else if (e.touches.length === 2) {
+      var dx = e.touches[0].clientX - e.touches[1].clientX;
+      var dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastTouchDist = Math.sqrt(dx*dx + dy*dy);
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  svg.addEventListener('touchmove', function(e) {
+    if (e.touches.length === 1 && state.isDragging) {
+      var dx = e.touches[0].clientX - state.dragStart.x;
+      var dy = e.touches[0].clientY - state.dragStart.y;
+      state.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      state.camera.rotY += dx * 0.005;
+      state.camera.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, state.camera.rotX + dy * 0.005));
+      renderScene(); renderHUD(); renderAxisCompass();
+    } else if (e.touches.length === 2) {
+      var dx = e.touches[0].clientX - e.touches[1].clientX;
+      var dy = e.touches[0].clientY - e.touches[1].clientY;
+      var dist = Math.sqrt(dx*dx + dy*dy);
+      if (lastTouchDist > 0) {
+        state.camera.zoom *= dist / lastTouchDist;
+        state.camera.zoom = Math.max(0.1, Math.min(100, state.camera.zoom));
+      }
+      lastTouchDist = dist;
+      renderScene(); renderHUD(); renderAxisCompass();
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  svg.addEventListener('touchend', function() {
+    state.isDragging = false;
+    lastTouchDist = 0;
+  });
+
+  resetCamera();
+  render();
+}
+
+init();
+</script>
+</body>
+</html>
