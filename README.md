@@ -5,7 +5,7 @@ colorTo: blue
 sdk: static
 pinned: false
 license: mit
-short_description: Interactive 3D visualizer for CUDA grid/block/thread hierarchy
+short_description: A 3D visualizer for CUDA grid/block/thread hierarchy
 ---
 
 # CUDA Thread Visualizer
